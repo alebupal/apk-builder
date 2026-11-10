@@ -1,0 +1,12 @@
+# APKs generados y claves de firma (nunca al repositorio)
+output/
+keystore/
+*.jks
+*.keystore
+
+# Temporales
+*~
+*.swp
+.DS_Store
+.idea/
+.vscode/

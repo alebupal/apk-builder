@@ -1,0 +1,43 @@
+services:
+  apk-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILDER_UID: "${HOST_UID:-1000}"
+        BUILDER_GID: "${HOST_GID:-1000}"
+    image: apk-builder:latest
+    container_name: apk_builder
+    entrypoint: ["/bin/bash", "/usr/local/bin/entrypoint.sh"]
+    # Sin root: mismo UID/GID que el usuario del host (generar-apk.sh exporta
+    # HOST_UID/HOST_GID; UID no sirve porque en bash es de solo lectura y no se exporta).
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    volumes:
+      - "${WEB_DIR:?Falta WEB_DIR: usa ./generar-apk.sh o exporta WEB_DIR=/ruta/a/la/web}:/src-web:ro"
+      - "${OUTPUT_DIR:-./output}:/output"
+      - ./entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+      # Volumen nuevo (no "gradle-cache"): el antiguo se llenó como root y no sería escribible.
+      - gradle-cache-builder:/home/builder/.gradle
+      - npm-cache:/home/builder/.npm
+      # Persistente: aquí vive debug.keystore. Si se perdiera, cada APK de debug
+      # se firmaría con otra clave y Android no dejaría actualizar la app instalada.
+      - android-home:/home/builder/.android
+      # Firma release opcional: keystore.jks + password (y opcionalmente
+      # key-password) en este directorio, montado en solo lectura.
+      - "${KEYSTORE_DIR:-./keystore}:/keystore:ro"
+    environment:
+      - APP_NAME=${APP_NAME:-}
+      - APP_ID=${APP_ID:-}
+      - APP_VERSION=${APP_VERSION:-1.0.0}
+      - APP_VERSION_CODE=${APP_VERSION_CODE:-}
+      - KEY_ALIAS=${KEY_ALIAS:-release}
+      - HOME=/home/builder
+      - GRADLE_USER_HOME=/home/builder/.gradle
+      - ANDROID_USER_HOME=/home/builder/.android
+      - npm_config_cache=/home/builder/.npm
+      - CI=1
+
+volumes:
+  gradle-cache-builder:
+  npm-cache:
+  android-home:
