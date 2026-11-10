@@ -1,0 +1,6 @@
+# Solo hacen falta Dockerfile, entrypoint.sh y capacitor/ en el contexto de build.
+.git
+output/
+keystore/
+*.jks
+*.keystore

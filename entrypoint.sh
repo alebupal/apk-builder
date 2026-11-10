@@ -10,9 +10,9 @@ OUT_DIR="/output"
 BUILD_DIR="/workspace/build"
 KEYSTORE_DIR="/keystore"
 
-# Versiones exactas de Capacitor (sin "^": no hay lockfile y así todas las
-# compilaciones usan las mismas). Para actualizar: npm view @capacitor/cli dist-tags
-CAPACITOR_VERSION="6.2.3"
+# package.json + package-lock.json fijos (carpeta capacitor/ del repo, copiada
+# a la imagen): "npm ci" instala exactamente las versiones del lock.
+DEPS_DIR="/opt/apk-builder/capacitor"
 
 # Pasa a ASCII y deja solo letras, dígitos, "_" y "-" (nombre del .apk).
 slugify() {
@@ -20,6 +20,11 @@ slugify() {
     text=$(printf '%s' "$1" | LC_ALL=C.UTF-8 iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null) || text=$1
     printf '%s' "$text" | tr -cd '[:alnum:]_-'
 }
+
+if [ ! -f "$DEPS_DIR/package.json" ] || [ ! -f "$DEPS_DIR/package-lock.json" ]; then
+    echo "[-] ERROR: Faltan package.json/package-lock.json en $DEPS_DIR (reconstruye la imagen)."
+    exit 1
+fi
 
 if [ ! -d "$SRC_DIR" ] || [ ! -f "$SRC_DIR/index.html" ]; then
     echo "[-] ERROR: No se encontró 'index.html' en $SRC_DIR"
@@ -111,33 +116,22 @@ cp -r "$SRC_DIR"/* "$BUILD_DIR/www/"
 
 cd "$BUILD_DIR"
 
-echo "[*] Generando manifiesto y configuración de Capacitor..."
-# JSON generado con Node: el nombre de la app se escapa correctamente.
+echo "[*] Preparando dependencias y configuración de Capacitor..."
+cp "$DEPS_DIR/package.json" "$DEPS_DIR/package-lock.json" .
+# capacitor.config.json sí es dinámico (nombre e ID). Se genera con Node para
+# que el nombre de la app se escape correctamente.
 node -e '
 const fs = require("fs");
-const [appName, appId, version, capVersion] = process.argv.slice(1);
-const write = (file, data) => fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n");
-write("package.json", {
-  name: "apk-builder-app",
-  version: version,
-  private: true,
-  dependencies: {
-    "@capacitor/core": capVersion,
-    "@capacitor/android": capVersion
-  },
-  devDependencies: {
-    "@capacitor/cli": capVersion
-  }
-});
-write("capacitor.config.json", {
+const [appName, appId] = process.argv.slice(1);
+fs.writeFileSync("capacitor.config.json", JSON.stringify({
   appId: appId,
   appName: appName,
   webDir: "www",
   backgroundColor: "#0b0f19",
   server: { androidScheme: "https" },
   android: { captureInput: true, webContentsDebuggingEnabled: false }
-});
-' "$APP_NAME" "$APP_ID" "$APP_VERSION" "$CAPACITOR_VERSION"
+}, null, 2) + "\n");
+' "$APP_NAME" "$APP_ID"
 
 # 1. Optimizar viewport y estilos nativos en index.html
 if [ -f "$BUILD_DIR/www/index.html" ]; then
@@ -168,8 +162,10 @@ STYLES
     rm -f "$NATIVE_CSS"
 fi
 
-echo "[*] Instalando dependencias de Capacitor..."
-npm install --silent --no-audit --no-fund
+echo "[*] Instalando dependencias de Capacitor (npm ci, versiones del lock)..."
+# La caché npm (npm_config_cache) es el volumen npm-cache: tras la primera vez
+# los paquetes salen de ahí. npm ci falla si package.json y el lock no cuadran.
+npm ci --prefer-offline --no-audit --no-fund --loglevel=error
 
 echo "[*] Creando proyecto nativo Android..."
 npx cap add android
@@ -187,9 +183,17 @@ if [ -f "$STYLES_XML" ]; then
     fi
 fi
 
-# Ajustar teclado suave para que no deforme la pantalla
-if [ -f "android/app/src/main/AndroidManifest.xml" ]; then
-    sed -i 's/android:windowSoftInputMode="[^"]*"/android:windowSoftInputMode="adjustResize"/g' android/app/src/main/AndroidManifest.xml 2>/dev/null || true
+# Ajustar teclado suave para que no deforme la pantalla. La plantilla de
+# Capacitor 6 no trae windowSoftInputMode: si no existe, se añade a MainActivity.
+MANIFEST="android/app/src/main/AndroidManifest.xml"
+if [ -f "$MANIFEST" ]; then
+    if grep -q 'android:windowSoftInputMode=' "$MANIFEST"; then
+        sed -i 's/android:windowSoftInputMode="[^"]*"/android:windowSoftInputMode="adjustResize"/g' "$MANIFEST"
+    else
+        sed -i 's/^\([[:space:]]*\)android:name="\.MainActivity"/&\n\1android:windowSoftInputMode="adjustResize"/' "$MANIFEST"
+    fi
+    grep -q 'android:windowSoftInputMode="adjustResize"' "$MANIFEST" \
+        || echo "[!] Aviso: no se pudo fijar windowSoftInputMode en $MANIFEST"
 fi
 
 # Si el usuario incluyó icon.png o favicon.png, copiarlo a los mipmaps
@@ -215,9 +219,12 @@ if [ -n "$ICON_SRC" ]; then
     done
 
     # Ajustar color de fondo del adaptive icon al color oscuro del tema
-    if [ -f "android/app/src/main/res/values/colors.xml" ]; then
-        sed -i 's/<color name="ic_launcher_background">.*<\/color>/<color name="ic_launcher_background">#0b0f19<\/color>/g' android/app/src/main/res/values/colors.xml 2>/dev/null || true
-    fi
+    # (Capacitor 6 lo define en values/ic_launcher_background.xml; antes, colors.xml).
+    for colors_xml in android/app/src/main/res/values/ic_launcher_background.xml \
+                      android/app/src/main/res/values/colors.xml; do
+        [ -f "$colors_xml" ] || continue
+        sed -i 's/<color name="ic_launcher_background">.*<\/color>/<color name="ic_launcher_background">#0b0f19<\/color>/g' "$colors_xml"
+    done
 fi
 
 # Versión y firma: se añade un bloque android {} al final de app/build.gradle,

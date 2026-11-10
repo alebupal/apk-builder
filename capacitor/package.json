@@ -1,0 +1,13 @@
+{
+  "name": "apk-builder-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dependencias de Capacitor que entrypoint.sh instala con npm ci (ver README).",
+  "dependencies": {
+    "@capacitor/android": "6.2.3",
+    "@capacitor/core": "6.2.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "6.2.3"
+  }
+}

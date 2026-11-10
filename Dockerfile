@@ -2,12 +2,16 @@
 # compilación sea reproducible. Digests consultados en Docker Hub el 2026-11-10.
 # Para actualizarlos:
 #   docker buildx imagetools inspect eclipse-temurin:17-jdk-jammy   (línea "Digest:")
-#   docker buildx imagetools inspect node:20-bookworm-slim
+#   docker buildx imagetools inspect node:24.22.2-bookworm-slim
 # Se pueden sobrescribir con --build-arg BASE_IMAGE=... / NODE_IMAGE=...
 ARG BASE_IMAGE=eclipse-temurin:17-jdk-jammy@sha256:057a0daec60e87c96571bf5c9c7792065bcb19e804d584cd37d4144038a35717
-ARG NODE_IMAGE=node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
+ARG NODE_IMAGE=node:24.22.2-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9
 
-# Node.js 20 sale de la imagen oficial (en lugar de "curl | bash" de NodeSource).
+# Node.js 24 LTS ("Krypton", soporte hasta 2028-04-30) sale de la imagen oficial
+# (en lugar de "curl | bash" de NodeSource). Node 20 terminó su soporte el
+# 2026-04-30 y Node 22 lo termina el 2027-04-30. El binario copiado pide como
+# máximo GLIBC_2.28 y GLIBCXX_3.4.21 (objdump -T); jammy trae glibc 2.35 y
+# GLIBCXX_3.4.30, así que funciona aunque la imagen de Node sea bookworm.
 FROM ${NODE_IMAGE} AS node
 
 FROM ${BASE_IMAGE}
@@ -45,7 +49,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
-# Node.js 20 + npm desde la imagen oficial
+# Node.js 24 + npm desde la imagen oficial
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
@@ -79,6 +83,12 @@ WORKDIR /workspace
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh
+
+# Dependencias de Capacitor fijadas: entrypoint.sh copia estos dos ficheros al
+# espacio de trabajo y ejecuta "npm ci" (ver README para actualizar el lock).
+# (Sin --chmod: aplicaría también a los directorios creados y los dejaría sin
+# permiso de acceso para el usuario builder.)
+COPY capacitor/package.json capacitor/package-lock.json /opt/apk-builder/capacitor/
 
 USER builder
 
