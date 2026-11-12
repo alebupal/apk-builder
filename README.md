@@ -2,7 +2,7 @@
 
 Herramienta genérica y aislada basada en Docker para convertir **cualquier proyecto web HTML/CSS/JS** en una aplicación nativa instalable de Android (`.apk`), sin necesidad de instalar Android Studio, Java ni SDKs en tu servidor o PC.
 
-Funciona de forma **100% offline (standalone)** empaquetando todo el código frontend dentro del APK nativo mediante Capacitor y Gradle.
+La app resultante funciona de forma **100% offline (standalone)**: todo el código frontend va empaquetado dentro del APK nativo mediante Capacitor y Gradle. La compilación, en cambio, necesita internet la primera vez (descarga Gradle, el Android Gradle Plugin y sus dependencias); las siguientes reutilizan las cachés de Gradle y npm.
 
 ---
 
@@ -15,6 +15,8 @@ apk-builder/
 ├── entrypoint.sh        # Generador de estructura Capacitor, integración de icono y Gradle
 ├── capacitor/           # package.json + package-lock.json fijos de Capacitor (se instalan con npm ci)
 ├── .dockerignore        # Deja fuera del contexto de build output/, keystore/ y .git
+├── .gitignore           # Excluye output/, keystore/ y claves (*.jks, *.keystore)
+├── .github/workflows/   # CI: bash -n + shellcheck de los scripts
 ├── generar-apk.sh       # Script principal (interactivo o por línea de comandos)
 ├── README.md            # Documentación y ejemplos
 ├── keystore/            # (Opcional) keystore de release, montada en solo lectura
@@ -73,6 +75,8 @@ La imagen se reconstruye en cada ejecución (`docker compose build`); gracias a 
 
 `APP_VERSION` (`X.Y.Z`, cuarto argumento o variable de entorno) se usa como `versionName`, y el `versionCode` se deriva como `X*10000 + Y*100 + Z` (`Y` y `Z` deben ser menores que 100). Para fijarlo a mano exporta `APP_VERSION_CODE`. Para que Android acepte una actualización encima de la app instalada, el `versionCode` debe crecer y la firma debe ser la misma.
 
+**Variables de entorno con `generar-apk.sh`:** de la versión se respeta `APP_VERSION` exportada (si no se pasa el cuarto argumento), igual que `APP_VERSION_CODE`, `KEY_ALIAS` y `KEYSTORE_DIR`. En cambio, el nombre y el Package ID solo se toman de los argumentos (o del asistente): si exportas `APP_NAME` o `APP_ID`, el script los sobrescribe con lo introducido (vacío = automático). Esas dos variables solo tienen efecto usando `docker compose run --rm apk-builder` directamente.
+
 ---
 
 ## 🔐 Firma del APK
@@ -90,6 +94,8 @@ La imagen se reconstruye en cada ejecución (`docker compose build`); gracias a 
 ## 👤 Usuario del contenedor
 
 El contenedor no corre como root: usa tu UID/GID (`generar-apk.sh` exporta `HOST_UID`/`HOST_GID`; si usas `docker compose` directamente, expórtalos tú o se usará `1000:1000`). El APK queda a tu nombre con permisos `644`. Las cachés de Gradle y npm van en los volúmenes `gradle-cache-builder` y `npm-cache`. El volumen antiguo `gradle-cache` (creado como root) ya no se usa y se puede borrar.
+
+Los volúmenes con nombre conservan el propietario con el que se crearon. Si compilas con otro UID/GID, borra las cachés para que se vuelvan a crear (`docker volume rm apk-builder_gradle-cache-builder apk-builder_npm-cache`); borrar también `apk-builder_android-home` cambia la clave debug (ver *Firma del APK*).
 
 ---
 
@@ -130,6 +136,8 @@ Para actualizar los digests de las imágenes base: `docker buildx imagetools ins
 
 Si dentro de la carpeta web que compilas existe un archivo `icon.png` o `favicon.png`, el compilador lo detectará y lo aplicará automáticamente como el icono de launcher de Android para tu aplicación (y el fondo del icono adaptativo pasa al color oscuro del tema, `#0b0f19`).
 
+> **Limitación:** el PNG se copia tal cual, sin redimensionar, a todas las densidades (`mipmap-*`) como `ic_launcher`, `ic_launcher_round` e `ic_launcher_foreground`. En Android 8+ el icono adaptativo usa el foreground con una zona segura de ~66/108 del lienzo, así que un icono a sangre puede verse recortado o ampliado. Usa un PNG cuadrado (p. ej. 512×512) con el motivo centrado y margen alrededor.
+
 Además, en cada compilación se ajusta el proyecto nativo: barras de estado y navegación `#0b0f19` en el tema `AppTheme.NoActionBar`, `windowSoftInputMode="adjustResize"` en `MainActivity`, y en `index.html` el viewport (sin zoom, `viewport-fit=cover`) y unos estilos de safe-area.
 
 ---
@@ -141,7 +149,9 @@ Todos los APKs se guardan en:
 apk-builder/output/<NombreDeLaApp>.apk
 ```
 
+`generar-apk.sh` usa siempre `./output`. Si lanzas `docker compose run --rm apk-builder` directamente, puedes cambiar el destino con la variable `OUTPUT_DIR`.
+
 Para instalarlo en tu móvil:
 1. Envía el `.apk` a tu teléfono (vía PairDrop, FileBrowser, Telegram o cable).
 2. Toca el archivo en Android y pulsa **Instalar**.
-3. ¡Listo! La app se ejecutará de forma independiente, a pantalla completa y sin depender de conexión a internet.
+3. ¡Listo! La app se ejecutará de forma independiente, sin la interfaz del navegador (con la barra de estado del sistema en `#0b0f19`) y sin depender de conexión a internet.
